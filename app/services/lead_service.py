@@ -1,63 +1,51 @@
-from app.repositories.lead_repository import LeadRepository
-from app.db.models.lead import Lead, LeadStage
+from app.services.lead_state_machine import LeadStateMachine
+from fastapi import HTTPException
 from app.db.models.sale import Sale
-from app.db.models.sale import SaleStage
-
-
-ALLOWED_TRANSITIONS = {
-    "new": ["contacted", "lost"],
-    "contacted": ["qualified", "lost"],
-    "qualified": ["transferred", "lost"],
-}
-
+from app.models.enums import *
 
 class LeadService:
-    def __init__(self, repo: LeadRepository):
-        self.repo = repo
 
-    async def create_lead(self, source: str, business_domain: str | None):
-        lead = Lead(source=source, business_domain=business_domain)
-        return await self.repo.create(lead)
+    def __init__(self, db):
+        self.db = db
 
-    async def update_stage(self, lead: Lead, new_stage: str):
+    async def update_stage(self, lead, new_stage):
+        try:
+            LeadStateMachine.validate_transition(lead.stage, new_stage)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
 
-        if lead.stage == LeadStage.transferred:
-            raise ValueError("Stage cannot be changed")
+        lead.stage = new_stage
+        await self.db.commit()
+        await self.db.refresh(lead)
+        return lead
+    
+    async def transfer_to_sales(self, lead):
 
-        current_stage = lead.stage.value
+        if not lead:
+            raise HTTPException(status_code=404, detail="Lead not found")
 
-        if current_stage not in ALLOWED_TRANSITIONS:
-            raise ValueError("Stage cannot be changed")
+        if lead.stage == ColdStage.transferred:
+            raise HTTPException(status_code=400, detail="Lead already transferred")
 
-        if new_stage not in ALLOWED_TRANSITIONS[current_stage]:
-            raise ValueError("Stage transition not allowed")
-
-        lead.stage = LeadStage(new_stage)
-        lead.activity_count += 3
-
-        return await self.repo.update(lead)
-
-    async def transfer_to_sales(self, lead: Lead):
-
-        if lead.stage != LeadStage.qualified:
-            raise ValueError("Lead must be qualified before transfer")
-
-        if lead.ai_score is None:
-            raise ValueError("AI analysis required before transfer")
-
-        if lead.ai_score < 0.6:
-            raise ValueError("AI score too low")
+        if lead.ai_score is None or lead.ai_score < 0.6:
+            raise HTTPException(status_code=400, detail="Lead not ready for sales")
 
         if not lead.business_domain:
-            raise ValueError("Business domain required")
+            raise HTTPException(status_code=400, detail="Business domain required")
 
         sale = Sale(
             lead_id=lead.id,
-            stage=SaleStage.new
+            stage=SalesStage.new
         )
 
-        await self.repo.create_sale(sale)
+        self.db.add(sale)
 
-        lead.stage = LeadStage.transferred
+        lead.stage = ColdStage.transferred
 
-        return await self.repo.update(lead)
+        await self.db.commit()
+        await self.db.refresh(sale)
+
+        return {
+            "message": "Lead transferred to sales",
+            "sale_id": sale.id
+        }

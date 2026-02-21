@@ -1,88 +1,89 @@
-from fastapi import APIRouter, HTTPException, Depends
-from typing import AsyncGenerator
-from app.schemas.lead import LeadCreate, LeadStageUpdate, AIResponse
-from app.repositories.lead_repository import LeadRepository
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.db.session import get_db
 from app.services.lead_service import LeadService
+from app.schemas.lead import *
+from app.models.enums import ColdStage
+from app.schemas.lead import LeadOut
+from app.db.models.lead import Lead
+from app.schemas.lead import LeadCreate
+from sqlalchemy import select
 from app.ai.lead_ai_service import LeadAIService
-from app.db.session import AsyncSessionLocal
-
-router = APIRouter()
-ai_service = LeadAIService()
+from app.repositories.lead_repository import LeadRepository
 
 
-async def get_repo() -> AsyncGenerator[LeadRepository, None]:
-    async with AsyncSessionLocal() as session:
-        yield LeadRepository(session)
+router = APIRouter(prefix="/leads", tags=["leads"])
 
 
-@router.post("/", response_model=dict)
-async def create_lead(
-    lead_in: LeadCreate,
-    repo: LeadRepository = Depends(get_repo)
-):
-    service = LeadService(repo)
-    lead = await service.create_lead(
-        lead_in.source,
-        lead_in.business_domain
+@router.post("/")
+async def create_lead(data: LeadCreate, db: AsyncSession = Depends(get_db)):
+    lead = Lead(
+        source=data.source,
+        business_domain=data.business_domain,
     )
+    db.add(lead)
+    await db.commit()
+    await db.refresh(lead)
+    return lead
 
-    return {"id": lead.id, "stage": lead.stage}
+@router.patch("/{lead_id}/activity", response_model=LeadOut)
+async def update_activity(
+    lead_id: int,
+    data: LeadActivityUpdate,
+    db: AsyncSession = Depends(get_db)
+):
+    result = await db.execute(select(Lead).where(Lead.id == lead_id))
+    lead = result.scalar_one_or_none()
+
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+
+    lead.activity = data.activity
+    await db.commit()
+    await db.refresh(lead)
+
+    return LeadOut.model_validate(lead)
 
 
-@router.patch("/{lead_id}/stage", response_model=dict)
+@router.post("/{lead_id}/transfer")
+async def transfer(lead_id: int, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Lead).where(Lead.id == lead_id))
+    lead = result.scalar_one()
+
+    service = LeadService(db)
+    return await service.transfer_to_sales(lead)
+
+@router.patch("/{lead_id}/stage")
 async def update_stage(
     lead_id: int,
-    stage_update: LeadStageUpdate,
-    repo: LeadRepository = Depends(get_repo)
+    data: LeadStageUpdate,
+    db: AsyncSession = Depends(get_db),
 ):
-    service = LeadService(repo)
-    lead = await repo.get_by_id(lead_id)
+    result = await db.execute(select(Lead).where(Lead.id == lead_id))
+    lead = result.scalar_one_or_none()
 
     if not lead:
-        raise HTTPException(404, "Lead not found")
+        raise HTTPException(status_code=404, detail="Lead not found")
 
-    try:
-        lead = await service.update_stage(lead, stage_update.new_stage)
-    except ValueError as e:
-        raise HTTPException(400, str(e))
+    service = LeadService(db)
 
-    return {"id": lead.id, "stage": lead.stage}
+    updated_lead = await service.update_stage(
+        lead,
+        ColdStage(data.stage),
+    )
 
+    return updated_lead
 
-@router.get("/{lead_id}/ai", response_model=AIResponse)
-async def ai_analysis(
-    lead_id: int,
-    repo: LeadRepository = Depends(get_repo)
-):
-    lead = await repo.get_by_id(lead_id)
+@router.post("/{lead_id}/analyze")
+async def analyze_lead(lead_id: int, session: AsyncSession = Depends(get_db)):
 
-    if not lead:
-        raise HTTPException(404, "Lead not found")
+    lead = await LeadRepository.get(session, lead_id)
 
-    ai_result = await ai_service.analyze_lead(lead)
+    result = await LeadAIService.analyze(lead)
 
-    lead.ai_score = ai_result["score"]
-    lead.ai_recommendation = ai_result["recommendation"]
+    lead.ai_score = result["score"]
+    lead.ai_recommendation = result["recommendation"]
 
-    await repo.update(lead)
+    await session.commit()
 
-    return ai_result
-
-
-@router.post("/{lead_id}/transfer", response_model=dict)
-async def transfer_to_sales(
-    lead_id: int,
-    repo: LeadRepository = Depends(get_repo)
-):
-    service = LeadService(repo)
-    lead = await repo.get_by_id(lead_id)
-
-    if not lead:
-        raise HTTPException(404, "Lead not found")
-
-    try:
-        lead = await service.transfer_to_sales(lead)
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-
-    return {"id": lead.id, "stage": lead.stage}
+    return result

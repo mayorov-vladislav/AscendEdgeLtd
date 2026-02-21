@@ -1,6 +1,12 @@
-import os
+from pydantic_settings import BaseSettings
 
-class Settings:
-    DATABASE_URL: str = "sqlite+aiosqlite:///./test.db" 
+
+class Settings(BaseSettings):
+    DATABASE_URL: str = "postgresql+asyncpg://postgres:123456@127.0.0.1:5432/ascendedgeltd"
+
+    model_config = {
+        "env_file": ".env"
+    }
+
 
 settings = Settings()

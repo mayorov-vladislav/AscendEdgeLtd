@@ -1,38 +1,24 @@
-import enum
-from sqlalchemy import Column, Integer, String, Float, Enum
-from sqlalchemy.orm import declarative_base
-
-Base = declarative_base()
-
-
-class LeadStage(str, enum.Enum):
-    new = "new"
-    contacted = "contacted"
-    qualified = "qualified"
-    transferred = "transferred"
-    lost = "lost"
-
-
-class LeadSource(str, enum.Enum):
-    scanner = "scanner"
-    partner = "partner"
-    manual = "manual"
-
-
-class BusinessDomain(str, enum.Enum):
-    first = "first"
-    second = "second"
-    third = "third"
+from sqlalchemy import Integer, Enum, Float
+from sqlalchemy.orm import Mapped, mapped_column
+from app.db.base import Base
+from app.models.enums import LeadSource, BusinessDomain, ColdStage, AIRecommendation
 
 
 class Lead(Base):
     __tablename__ = "leads"
 
-    id = Column(Integer, primary_key=True, index=True)
-    source = Column(Enum(LeadSource), nullable=False)
-    stage = Column(Enum(LeadStage), default=LeadStage.new, nullable=False)
-    business_domain = Column(Enum(BusinessDomain), nullable=True)
-    activity_count = Column(Integer, default=0)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
 
-    ai_score = Column(Float, nullable=True)
-    ai_recommendation = Column(String, nullable=True)
+    source: Mapped[LeadSource] = mapped_column(Enum(LeadSource), nullable=False)
+    stage: Mapped[ColdStage] = mapped_column(Enum(ColdStage), default=ColdStage.new)
+
+    business_domain: Mapped[BusinessDomain | None] = mapped_column(
+        Enum(BusinessDomain), nullable=True
+    )
+
+    activity_count: Mapped[int] = mapped_column(Integer, default=0)
+
+    ai_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ai_recommendation: Mapped[AIRecommendation | None] = mapped_column(
+        Enum(AIRecommendation), nullable=True
+    )

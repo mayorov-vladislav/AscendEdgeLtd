@@ -1,20 +1,12 @@
-import enum
-from sqlalchemy import Column, Integer, Enum, ForeignKey
-from app.db.models.lead import Base
-
-
-class SaleStage(str, enum.Enum):
-    new = "new"
-    kyc = "kyc"
-    agreement = "agreement"
-    paid = "paid"
-    lost = "lost"
+from sqlalchemy import Integer, ForeignKey, Enum
+from sqlalchemy.orm import Mapped, mapped_column
+from app.db.base import Base
+from app.models.enums import SalesStage
 
 
 class Sale(Base):
     __tablename__ = "sales"
 
-    id = Column(Integer, primary_key=True)
-    lead_id = Column(Integer, ForeignKey("leads.id"), nullable=False)
-
-    stage = Column(Enum(SaleStage), default=SaleStage.new, nullable=False)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    lead_id: Mapped[int] = mapped_column(ForeignKey("leads.id"), nullable=False)
+    stage: Mapped[SalesStage] = mapped_column(Enum(SalesStage), default=SalesStage.new)
