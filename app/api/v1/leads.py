@@ -1,19 +1,35 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 from app.db.session import get_db
 from app.services.lead_service import LeadService
 from app.schemas.lead import *
 from app.models.enums import ColdStage
 from app.schemas.lead import LeadOut
 from app.db.models.lead import Lead
-from app.schemas.lead import LeadCreate
-from sqlalchemy import select
-from app.ai.lead_ai_service import LeadAIService
-from app.repositories.lead_repository import LeadRepository
 
 
 router = APIRouter(prefix="/leads", tags=["leads"])
 
+
+def get_lead_service(db: AsyncSession = Depends(get_db)):
+    return LeadService(db)
+
+
+@router.get("/{lead_id}", response_model=LeadOut)
+async def get_lead(
+    lead_id: int,
+    db: AsyncSession = Depends(get_db)
+):
+    result = await db.execute(
+        select(Lead).where(Lead.id == lead_id)
+    )
+    lead = result.scalar_one_or_none()
+
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+
+    return lead
 
 @router.post("/")
 async def create_lead(data: LeadCreate, db: AsyncSession = Depends(get_db)):
@@ -25,6 +41,7 @@ async def create_lead(data: LeadCreate, db: AsyncSession = Depends(get_db)):
     await db.commit()
     await db.refresh(lead)
     return lead
+
 
 @router.patch("/{lead_id}/activity", response_model=LeadOut)
 async def update_activity(
@@ -38,25 +55,19 @@ async def update_activity(
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
 
-    lead.activity = data.activity
+    lead.activity_count = data.activity_count
+
     await db.commit()
     await db.refresh(lead)
 
     return LeadOut.model_validate(lead)
 
 
-@router.post("/{lead_id}/transfer")
-async def transfer(lead_id: int, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Lead).where(Lead.id == lead_id))
-    lead = result.scalar_one()
-
-    service = LeadService(db)
-    return await service.transfer_to_sales(lead)
-
 @router.patch("/{lead_id}/stage")
 async def update_stage(
     lead_id: int,
     data: LeadStageUpdate,
+    service: LeadService = Depends(get_lead_service),
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(select(Lead).where(Lead.id == lead_id))
@@ -65,8 +76,6 @@ async def update_stage(
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
 
-    service = LeadService(db)
-
     updated_lead = await service.update_stage(
         lead,
         ColdStage(data.stage),
@@ -74,16 +83,32 @@ async def update_stage(
 
     return updated_lead
 
+
 @router.post("/{lead_id}/analyze")
-async def analyze_lead(lead_id: int, session: AsyncSession = Depends(get_db)):
+async def analyze_lead(
+    lead_id: int,
+    service: LeadService = Depends(get_lead_service),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(Lead).where(Lead.id == lead_id))
+    lead = result.scalar_one_or_none()
 
-    lead = await LeadRepository.get(session, lead_id)
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
 
-    result = await LeadAIService.analyze(lead)
+    return await service.analyze_lead(lead)
 
-    lead.ai_score = result["score"]
-    lead.ai_recommendation = result["recommendation"]
 
-    await session.commit()
+@router.post("/{lead_id}/transfer")
+async def transfer(
+    lead_id: int,
+    service: LeadService = Depends(get_lead_service),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(Lead).where(Lead.id == lead_id))
+    lead = result.scalar_one_or_none()
 
-    return result
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+
+    return await service.transfer_to_sales(lead)

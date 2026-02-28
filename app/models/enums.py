@@ -32,3 +32,4 @@ class SalesStage(str, Enum):
 class AIRecommendation(str, Enum):
     transfer_to_sales = "transfer_to_sales"
     keep_nurturing = "keep_nurturing"
+    mark_as_lost = "mark_as_lost"

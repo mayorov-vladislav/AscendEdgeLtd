@@ -10,8 +10,8 @@ async def test_activity_update(client):
 
     response = await client.patch(
         f"/api/v1/leads/{lead_id}/activity",
-        json={"activity": 5}
+        json={"activity_count": 5}
     )
 
     assert response.status_code == 200
-    assert response.json()["activity"] == 5
+    assert response.json()["activity_count"] == 5

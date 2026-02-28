@@ -1,28 +1,86 @@
 import pytest
-from sqlalchemy import select
-from app.db.models.lead import Lead
-from app.models.enums import AIRecommendation
+from app.services.ai_service import AIService
+
+class FakeAIService:
+    async def analyze_lead(self, lead):
+        return type("AIResult", (), {
+            "score": 0.8,
+            "recommendation": "transfer_to_sales",
+            "reason": "High engagement"
+        })()
 
 
 @pytest.mark.asyncio
-async def test_successful_transfer(client, db_session):
-    response = await client.post(
-        "/api/v1/leads/",
-        json={"source": "scanner", "business_domain": "first"}
+async def test_full_pipeline(client, monkeypatch):
+
+    monkeypatch.setattr(
+        "app.services.lead_service.AIService",
+        lambda: FakeAIService()
     )
-    lead_id = response.json()["id"]
 
-    await client.patch(f"/api/v1/leads/{lead_id}/stage", json={"stage": "contacted"})
-    await client.patch(f"/api/v1/leads/{lead_id}/stage", json={"stage": "qualified"})
+    create = await client.post(
+        "/api/v1/leads/",
+        json={"source": "manual", "business_domain": "first"}
+    )
+    lead_id = create.json()["id"]
 
-    result = await db_session.execute(select(Lead).where(Lead.id == lead_id))
-    lead = result.scalar_one()
-    
+    await client.patch(
+        f"/api/v1/leads/{lead_id}/activity",
+        json={"activity_count": 15}
+    )
 
-    lead.ai_score = 0.9
-    lead.ai_recommendation = AIRecommendation.transfer_to_sales
-    await db_session.commit()
+    analyze = await client.post(
+        f"/api/v1/leads/{lead_id}/analyze"
+    )
 
-    response = await client.post(f"/api/v1/leads/{lead_id}/transfer")
+    assert analyze.status_code == 200
+    assert analyze.json()["recommendation"] == "transfer_to_sales"
 
-    assert response.status_code == 200
+    transfer = await client.post(
+        f"/api/v1/leads/{lead_id}/transfer"
+    )
+
+    assert transfer.status_code == 200
+    assert transfer.json()["message"] == "Lead transferred to sales"
+
+    second_transfer = await client.post(
+        f"/api/v1/leads/{lead_id}/transfer"
+    )
+
+    assert second_transfer.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_transfer_blocked_low_score(client, monkeypatch):
+
+    class LowScoreAI:
+        async def analyze_lead(self, lead):
+            return type("AIResult", (), {
+                "score": 0.4,
+                "recommendation": "keep_nurturing",
+                "reason": "Low engagement"
+            })()
+
+    monkeypatch.setattr(
+        "app.services.lead_service.AIService",
+        lambda: LowScoreAI()
+    )
+
+    create = await client.post(
+        "/api/v1/leads/",
+        json={"source": "manual", "business_domain": "first"}
+    )
+    lead_id = create.json()["id"]
+
+    await client.patch(
+        f"/api/v1/leads/{lead_id}/activity",
+        json={"activity_count": 3}
+    )
+
+    await client.post(f"/api/v1/leads/{lead_id}/analyze")
+
+    transfer = await client.post(
+        f"/api/v1/leads/{lead_id}/transfer"
+    )
+
+    assert transfer.status_code == 400
