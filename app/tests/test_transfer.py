@@ -1,5 +1,5 @@
 import pytest
-from app.services.ai_service import AIService
+from app.ai.ai_service import AIService
 
 class FakeAIService:
     async def analyze_lead(self, lead):

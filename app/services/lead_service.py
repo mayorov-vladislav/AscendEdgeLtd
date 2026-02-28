@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 from app.services.lead_state_machine import LeadStateMachine
 from app.db.models.sale import Sale
 from app.models.enums import *
-from app.services.ai_service import AIService
+from app.ai.ai_service import AIService
 
 
 class LeadService:
